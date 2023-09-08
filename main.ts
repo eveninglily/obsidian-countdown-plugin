@@ -1,134 +1,74 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { Plugin } from "obsidian";
 
-// Remember to rename these classes and interfaces!
+const requiredFields = [
+  "id",
+  "text",
+  "time"
+];
 
-interface MyPluginSettings {
-	mySetting: string;
-}
+// Time constants, in ms
+const SECOND = 1000;
+const MINUTE = SECOND * 60;
+const HOUR = MINUTE * 60;
+const DAY = HOUR * 24;
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
-}
+export default class CountdownPlugin extends Plugin {
+  async onload() {
+    this.registerMarkdownCodeBlockProcessor("countdown", (source, el, ctx) => {
+      // Holder for k:v pairs made in the codeblock
+      const blockData: {[key: string]: string} = {};
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+      // extract from text into blockData
+      const rows = source.split("\n").filter((row) => row.length > 0);
+      rows.forEach((row) => {
+        const [key, ...valParts] = row.split(":");
+        blockData[key.trim()] = valParts.join(":").trim();
+      });
 
-	async onload() {
-		await this.loadSettings();
+      // TODO(eve): validate that all `requiredFields` are present in dict keys
+      console.log(requiredFields)
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
+      // Create HTML elements
+      const countdownDiv = el.createEl("div");
+      countdownDiv.setAttr("id", `countdown-${blockData["id"]}`);
+      countdownDiv.setAttr("class", `countdown bg-${blockData["color"] || "black"}`)
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
+      const countdownTitle = countdownDiv.createEl("h3");
+      countdownTitle.setText(blockData["text"]);
+      
+      const countdownTimeLeft = countdownDiv.createEl("i");
+      countdownTimeLeft.setText(blockData["time"]);
+      
+      const countdownTarget = new Date(blockData["time"]).getTime();
 
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
+      // loop update the display
+      setInterval(function() {
+        const now = new Date().getTime();
+        let timeDelta = countdownTarget - now;
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-			}
-		});
+        if(timeDelta == 0) {
+          countdownTimeLeft.setText("Now!!!");
+          return
+        }
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
+        const passedTarget = timeDelta < 0;
+        if(passedTarget) {
+          timeDelta = now - countdownTarget;
+        }        
 
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
+        // Time calculations for days, hours, minutes and seconds
+        // TODO(eve): cleaner way here?
+        const days = Math.floor(timeDelta / DAY);
+        const hours = Math.floor((timeDelta % DAY) / (HOUR));
+        const minutes = Math.floor((timeDelta % (HOUR)) / (MINUTE));
+        const seconds = Math.floor((timeDelta % (MINUTE)) / SECOND);
 
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
-	}
-
-	onunload() {
-
-	}
-
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-	}
-
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
-}
-
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
-
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
-
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
-}
-
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
-
-	constructor(app: App, plugin: MyPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
-
-	display(): void {
-		const {containerEl} = this;
-
-		containerEl.empty();
-
-		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
-				}));
-	}
+        // TODO(eve): granularity settings
+        const timeRemaining = `${days}d ${hours}h ${minutes}m ${seconds}s`;
+        const timeRemainingSuffix = passedTarget ? "ago" : "";
+        
+        countdownTimeLeft.setText(`${timeRemaining}  ${timeRemainingSuffix}`);
+      }, 1000);
+    });
+  }
 }
